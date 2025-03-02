@@ -4,7 +4,6 @@ YouTube 비디오 추천 시스템에서 사용되는 멀티태스크 랭킹 시
 
 ## 모델 아키텍처
 
-![YouTube Ranking System Architecture](https://i.imgur.com/placeholder-image.png)
 
 이 시스템은 다음과 같은 핵심 컴포넌트로 구성됩니다:
 
