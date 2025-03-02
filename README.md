@@ -119,8 +119,5 @@ YouTube-Ranking-System/
 
 ## 라이센스
 
-<<<<<<< HEAD
 이 프로젝트는 MIT 라이센스를 따릅니다. 
 =======
-이 프로젝트는 MIT 라이센스를 따릅니다. 
->>>>>>> 45fd091 (youtube_ranking_system 논문 코드 구현 ver.1)
