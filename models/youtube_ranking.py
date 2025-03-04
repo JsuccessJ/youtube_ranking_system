@@ -3,7 +3,7 @@ from .layers import EmbeddingLayer, MultiLayerPerceptron, GatingNetwork, Softmax
 
 class SideTower(torch.nn.Module):
     """
-    선택 편향을 보정하기 위한 Shallow 타워 (Wide 부분)
+    선택 편향을 보정하기 위한 Shallow 타워 
     참고: Wide & Deep 아키텍처에서 Wide 부분에 해당
     """
     def __init__(self, input_dim, hidden_dims, dropout=0.2):
@@ -90,8 +90,7 @@ class YouTubeRankingModel(torch.nn.Module):
         numerical_num,                # 수치형 피처 개수
         embed_dim=64,                 # 임베딩 차원
         shared_bottom_dims=(512, 256),  # 공유 은닉 계층 차원
-        shared_expert_num=4,          # 공유 전문가 수
-        task_expert_num=2,            # 태스크별 전문가 수
+        expert_num=8,                 # 전문가 수 (MMoE와 동일하게 변경)
         bottom_mlp_dims=(256, 128),   # 하단 MLP 차원
         tower_mlp_dims=(64, 32),      # 타워 MLP 차원
         side_tower_dims=(64, 32),     # 사이드 타워 차원
@@ -109,6 +108,7 @@ class YouTubeRankingModel(torch.nn.Module):
         self.embed_output_dim = (len(categorical_field_dims) + 1) * embed_dim
         self.task_num = task_num
         self.use_wide_and_deep = use_wide_and_deep
+        self.expert_num = expert_num
         
         # 공유 은닉 계층 (입력 처리를 위한 첫 번째 계층)
         self.shared_bottom = SharedBottomLayer(self.embed_output_dim, shared_bottom_dims, dropout)
@@ -119,33 +119,19 @@ class YouTubeRankingModel(torch.nn.Module):
         # 선택 편향 보정을 위한 사이드 타워 (Wide 부분)
         self.side_tower = SideTower(self.embed_output_dim, side_tower_dims, dropout)
         
-        # 공유 전문가 (Mixture-of-Experts) (Deep 부분)
-        self.shared_experts = torch.nn.ModuleList([
+        # 단일 전문가 풀 (이미지에 표시된 것처럼 모든 태스크에서 공유)
+        self.experts = torch.nn.ModuleList([
             ExpertLayer(self.shared_bottom_output_dim, bottom_mlp_dims[-1], dropout, 'relu')
-            for _ in range(shared_expert_num)
+            for _ in range(expert_num)
         ])
         
-        # 참여도 및 만족도 태스크별 전문가
-        self.task_experts = torch.nn.ModuleList([
-            torch.nn.ModuleList([
-                ExpertLayer(self.shared_bottom_output_dim, bottom_mlp_dims[-1], dropout, 'relu')
-                for _ in range(task_expert_num)
-            ])
-            for _ in range(task_num)
-        ])
-        
-        # 공유 및 태스크별 전문가 수 기록
-        self.shared_expert_num = shared_expert_num
-        self.task_expert_num = task_expert_num
-        self.total_expert_num = shared_expert_num + task_expert_num
-        
-        # 각 태스크별 게이팅 네트워크 
+        # 각 태스크별 게이트 (전문가 가중치 계산)
         self.gates = torch.nn.ModuleList([
-            GatingNetworkLayer(self.shared_bottom_output_dim, self.total_expert_num)
+            GatingNetworkLayer(self.shared_bottom_output_dim, expert_num)
             for _ in range(task_num)
         ])
         
-        # 태스크별 타워 네트워크
+        # 태스크별 타워 네트워크 (최종 예측을 위한 층)
         self.towers = torch.nn.ModuleList([
             MultiLayerPerceptron(bottom_mlp_dims[-1], tower_mlp_dims, dropout, activation='sigmoid')
             for _ in range(task_num)
@@ -173,23 +159,15 @@ class YouTubeRankingModel(torch.nn.Module):
         # 공유 은닉 계층을 통과 (첫 번째 특성 추출)
         shared_features = self.shared_bottom(emb)
         
-        # 공유 전문가 출력 계산
-        shared_expert_outputs = torch.stack([expert(shared_features) for expert in self.shared_experts], dim=1)
-        # (batch_size, shared_expert_num, bottom_mlp_dims[-1])
+        # 전문가 출력 계산
+        expert_outputs = torch.stack([expert(shared_features) for expert in self.experts], dim=1)
+        # (batch_size, expert_num, bottom_mlp_dims[-1])
         
         # 각 태스크별 예측값 계산
         task_outputs = []
         for i in range(self.task_num):
-            # 태스크별 전문가 출력 계산
-            task_expert_outputs = torch.stack([expert(shared_features) for expert in self.task_experts[i]], dim=1)
-            # (batch_size, task_expert_num, bottom_mlp_dims[-1])
-            
-            # 전체 전문가 출력 결합 (공유 + 태스크별)
-            expert_outputs = torch.cat([shared_expert_outputs, task_expert_outputs], dim=1)
-            # (batch_size, total_expert_num, bottom_mlp_dims[-1])
-            
             # 게이트 값 계산
-            gate_values = self.gates[i](shared_features).unsqueeze(1)  # (batch_size, 1, total_expert_num)
+            gate_values = self.gates[i](shared_features).unsqueeze(1)  # (batch_size, 1, expert_num)
             
             # 게이트 값과 전문가 출력 결합
             combined_features = torch.bmm(gate_values, expert_outputs).squeeze(1)  # (batch_size, bottom_mlp_dims[-1])
