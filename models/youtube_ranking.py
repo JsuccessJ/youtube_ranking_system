@@ -10,8 +10,8 @@ class SideTower(torch.nn.Module):
         super().__init__()
         self.mlp = MultiLayerPerceptron(
             input_dim, hidden_dims, dropout, 
-            output_layer=True,
-            activation='relu'
+            output_layer=True, # 출력층에는 활성화 함수 적용 X -> 즉 logit 값 그대로 출력
+            activation='relu' # 히든층에는 활성화 함수 적용
         )
         
     def forward(self, x):
